@@ -112,10 +112,10 @@ class QwenAdvancedBackend:
         await self._backend.load_model_async(None)
 
         from ..backends import LANGUAGE_CODE_TO_NAME
-        from .tasks_compat import manual_seed_if_available
+        from ..backends.base import manual_seed
 
         if seed is not None:
-            manual_seed_if_available(seed, self._backend.device)
+            manual_seed(seed, self._backend.device)
 
         kwargs = dict(self._controls)
         # Qwen exposes a second acoustic/subtalker sampler. Mirror the main
