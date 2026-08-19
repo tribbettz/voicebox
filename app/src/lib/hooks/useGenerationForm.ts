@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import { useToast } from '@/components/ui/use-toast';
@@ -88,6 +88,18 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
     },
   });
 
+  // Generation settings arrive asynchronously. Reflect the saved values in
+  // Advanced Options unless the user has already edited those fields locally.
+  useEffect(() => {
+    if (!genSettings) return;
+    if (!form.getFieldState('maxChunkChars').isDirty) {
+      form.setValue('maxChunkChars', genSettings.max_chunk_chars);
+    }
+    if (!form.getFieldState('crossfadeMs').isDirty) {
+      form.setValue('crossfadeMs', genSettings.crossfade_ms);
+    }
+  }, [form, genSettings]);
+
   async function handleSubmit(
     data: GenerationFormValues,
     selectedProfileId: string | null,
@@ -140,7 +152,6 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
                       ? 'Qwen TTS 1.7B'
                       : 'Qwen TTS 0.6B';
 
-      // Check if model needs downloading
       try {
         const modelStatus = await apiClient.getModelStatus();
         const model = modelStatus.models.find((m) => m.model_name === modelName);
@@ -157,9 +168,6 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         engine === 'qwen' || engine === 'qwen_custom_voice' || engine === 'tada';
       const effectsChain = options.getEffectsChain?.();
 
-      // Qwen CustomVoice consumes natural-language instruct text. Base Qwen
-      // does not, so Base uses the same persisted field as an internal envelope
-      // for supported sampling controls; the backend strips it before inference.
       const instruct =
         engine === 'qwen_custom_voice'
           ? data.instruct || undefined
@@ -172,7 +180,6 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
               })
             : undefined;
 
-      // This now returns immediately with status="generating"
       const result = await generation.mutateAsync({
         profile_id: selectedProfileId,
         text: data.text,
@@ -188,10 +195,8 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         effects_chain: effectsChain?.length ? effectsChain : undefined,
       });
 
-      // Track this generation for SSE status updates
       addPendingGeneration(result.id);
 
-      // Reset text but keep advanced controls so iterative tuning is easy.
       form.reset({
         text: '',
         language: data.language,
