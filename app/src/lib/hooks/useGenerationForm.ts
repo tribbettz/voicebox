@@ -9,13 +9,17 @@ import { LANGUAGE_CODES, type LanguageCode } from '@/lib/constants/languages';
 import { useGeneration } from '@/lib/hooks/useGeneration';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useGenerationSettings } from '@/lib/hooks/useSettings';
+import {
+  encodeQwenAdvancedControls,
+  QWEN_ADVANCED_DEFAULTS,
+} from '@/lib/utils/qwenAdvanced';
 import { useGenerationStore } from '@/stores/generationStore';
 import { useUIStore } from '@/stores/uiStore';
 
 const generationSchema = z.object({
   text: z.string().min(1, '').max(50000),
   language: z.enum(LANGUAGE_CODES as [LanguageCode, ...LanguageCode[]]),
-  seed: z.number().int().optional(),
+  seed: z.number().int().min(0).optional(),
   modelSize: z.enum(['1.7B', '0.6B', '1B', '3B']).optional(),
   instruct: z.string().max(500).optional(),
   engine: z
@@ -30,6 +34,12 @@ const generationSchema = z.object({
     ])
     .optional(),
   personality: z.boolean().optional(),
+  qwenTemperature: z.number().min(0.1).max(1.5),
+  qwenTopP: z.number().min(0.1).max(1),
+  qwenTopK: z.number().int().min(1).max(100),
+  qwenRepetitionPenalty: z.number().min(1).max(1.5),
+  maxChunkChars: z.number().int().min(100).max(5000),
+  crossfadeMs: z.number().int().min(0).max(500),
 });
 
 export type GenerationFormValues = z.infer<typeof generationSchema>;
@@ -45,8 +55,8 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
   const generation = useGeneration();
   const addPendingGeneration = useGenerationStore((state) => state.addPendingGeneration);
   const { settings: genSettings } = useGenerationSettings();
-  const maxChunkChars = genSettings?.max_chunk_chars ?? 800;
-  const crossfadeMs = genSettings?.crossfade_ms ?? 50;
+  const defaultMaxChunkChars = genSettings?.max_chunk_chars ?? 800;
+  const defaultCrossfadeMs = genSettings?.crossfade_ms ?? 50;
   const normalizeAudio = genSettings?.normalize_audio ?? true;
   const selectedEngine = useUIStore((state) => state.selectedEngine);
   const [downloadingModelName, setDownloadingModelName] = useState<string | null>(null);
@@ -68,6 +78,12 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       instruct: '',
       engine: (selectedEngine as GenerationFormValues['engine']) || 'qwen',
       personality: false,
+      qwenTemperature: QWEN_ADVANCED_DEFAULTS.temperature,
+      qwenTopP: QWEN_ADVANCED_DEFAULTS.topP,
+      qwenTopK: QWEN_ADVANCED_DEFAULTS.topK,
+      qwenRepetitionPenalty: QWEN_ADVANCED_DEFAULTS.repetitionPenalty,
+      maxChunkChars: defaultMaxChunkChars,
+      crossfadeMs: defaultCrossfadeMs,
       ...options.defaultValues,
     },
   });
@@ -139,10 +155,23 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
 
       const hasModelSizes =
         engine === 'qwen' || engine === 'qwen_custom_voice' || engine === 'tada';
-      // Only Qwen CustomVoice actually honors the instruct kwarg at model level.
-      // Base Qwen3-TTS accepts the kwarg but ignores it.
-      const supportsInstruct = engine === 'qwen_custom_voice';
       const effectsChain = options.getEffectsChain?.();
+
+      // Qwen CustomVoice consumes natural-language instruct text. Base Qwen
+      // does not, so Base uses the same persisted field as an internal envelope
+      // for supported sampling controls; the backend strips it before inference.
+      const instruct =
+        engine === 'qwen_custom_voice'
+          ? data.instruct || undefined
+          : engine === 'qwen'
+            ? encodeQwenAdvancedControls({
+                temperature: data.qwenTemperature,
+                topP: data.qwenTopP,
+                topK: data.qwenTopK,
+                repetitionPenalty: data.qwenRepetitionPenalty,
+              })
+            : undefined;
+
       // This now returns immediately with status="generating"
       const result = await generation.mutateAsync({
         profile_id: selectedProfileId,
@@ -151,10 +180,10 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         seed: data.seed,
         model_size: hasModelSizes ? data.modelSize : undefined,
         engine,
-        instruct: supportsInstruct ? data.instruct || undefined : undefined,
+        instruct,
         personality: data.personality || undefined,
-        max_chunk_chars: maxChunkChars,
-        crossfade_ms: crossfadeMs,
+        max_chunk_chars: data.maxChunkChars,
+        crossfade_ms: data.crossfadeMs,
         normalize: normalizeAudio,
         effects_chain: effectsChain?.length ? effectsChain : undefined,
       });
@@ -162,15 +191,21 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       // Track this generation for SSE status updates
       addPendingGeneration(result.id);
 
-      // Reset form immediately — user can start typing again
+      // Reset text but keep advanced controls so iterative tuning is easy.
       form.reset({
         text: '',
         language: data.language,
-        seed: undefined,
+        seed: data.seed,
         modelSize: data.modelSize,
         instruct: '',
         engine: data.engine,
         personality: data.personality,
+        qwenTemperature: data.qwenTemperature,
+        qwenTopP: data.qwenTopP,
+        qwenTopK: data.qwenTopK,
+        qwenRepetitionPenalty: data.qwenRepetitionPenalty,
+        maxChunkChars: data.maxChunkChars,
+        crossfadeMs: data.crossfadeMs,
       });
       options.onSuccess?.(result.id);
     } catch (error) {
