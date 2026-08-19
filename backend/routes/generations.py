@@ -350,7 +350,11 @@ async def stream_speech(
         engine=engine,
     )
 
-    from ..utils.chunked_tts import generate_chunked
+    from ..utils.advanced_tts import (
+        QWEN_FINAL_TAIL_MS,
+        generate_with_advanced_controls,
+        prepare_advanced_backend,
+    )
 
     trim_fn = None
     runaway_detector = None
@@ -363,15 +367,18 @@ async def stream_speech(
 
         runaway_detector = has_tts_runaway
 
-    audio, sample_rate = await generate_chunked(
+    tts_model, effective_instruct = prepare_advanced_backend(tts_model, engine, data.instruct)
+
+    audio, sample_rate = await generate_with_advanced_controls(
         tts_model,
         data.text,
         voice_prompt,
         language=data.language,
         seed=data.seed,
-        instruct=data.instruct,
+        instruct=effective_instruct,
         max_chunk_chars=data.max_chunk_chars,
         crossfade_ms=data.crossfade_ms,
+        final_tail_ms=QWEN_FINAL_TAIL_MS if engine == "qwen" else 0,
         trim_fn=trim_fn,
         runaway_detector=runaway_detector,
     )

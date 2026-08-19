@@ -55,9 +55,9 @@ async def run_generation(
         load_engine_model,
     )
     from ..utils.advanced_tts import (
-        QwenAdvancedBackend,
-        decode_qwen_advanced_instruct,
+        QWEN_FINAL_TAIL_MS,
         generate_with_advanced_controls,
+        prepare_advanced_backend,
     )
     from ..utils.audio import has_tts_runaway, normalize_audio, save_audio, trim_tts_output
 
@@ -83,11 +83,7 @@ async def run_generation(
         trim_fn = trim_tts_output if engine_needs_trim(engine) else None
         runaway_detector = has_tts_runaway if engine_retries_runaway(engine) else None
 
-        effective_instruct = instruct
-        if engine == "qwen":
-            qwen_controls, effective_instruct = decode_qwen_advanced_instruct(instruct)
-            if qwen_controls:
-                tts_model = QwenAdvancedBackend(tts_model, qwen_controls)
+        tts_model, effective_instruct = prepare_advanced_backend(tts_model, engine, instruct)
 
         gen_kwargs: dict = dict(
             language=language,
@@ -100,6 +96,8 @@ async def run_generation(
             gen_kwargs["max_chunk_chars"] = max_chunk_chars
         if crossfade_ms is not None:
             gen_kwargs["crossfade_ms"] = crossfade_ms
+        if engine == "qwen":
+            gen_kwargs["final_tail_ms"] = QWEN_FINAL_TAIL_MS
 
         audio, sample_rate = await generate_with_advanced_controls(
             tts_model,
@@ -296,9 +294,9 @@ async def generate_audio_sync(
         load_engine_model,
     )
     from ..utils.advanced_tts import (
-        QwenAdvancedBackend,
-        decode_qwen_advanced_instruct,
+        QWEN_FINAL_TAIL_MS,
         generate_with_advanced_controls,
+        prepare_advanced_backend,
     )
     from ..utils.audio import has_tts_runaway, normalize_audio, trim_tts_output
     from . import tts
@@ -320,11 +318,7 @@ async def generate_audio_sync(
     trim_fn = trim_tts_output if engine_needs_trim(engine) else None
     runaway_detector = has_tts_runaway if engine_retries_runaway(engine) else None
 
-    effective_instruct = instruct
-    if engine == "qwen":
-        qwen_controls, effective_instruct = decode_qwen_advanced_instruct(instruct)
-        if qwen_controls:
-            tts_model = QwenAdvancedBackend(tts_model, qwen_controls)
+    tts_model, effective_instruct = prepare_advanced_backend(tts_model, engine, instruct)
 
     gen_kwargs: dict = dict(
         language=language,
@@ -337,6 +331,8 @@ async def generate_audio_sync(
         gen_kwargs["max_chunk_chars"] = max_chunk_chars
     if crossfade_ms is not None:
         gen_kwargs["crossfade_ms"] = crossfade_ms
+    if engine == "qwen":
+        gen_kwargs["final_tail_ms"] = QWEN_FINAL_TAIL_MS
 
     audio, sample_rate = await generate_with_advanced_controls(
         tts_model,

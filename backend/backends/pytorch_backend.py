@@ -235,7 +235,10 @@ class PyTorchTTSBackend:
                 text=text,
                 voice_clone_prompt=voice_prompt,
                 language=LANGUAGE_CODE_TO_NAME.get(language, "auto"),
-                instruct=instruct,
+                # The complete text is already available. Qwen's False mode
+                # only simulates streamed text input and is more prone to an
+                # early EOS on short final spans.
+                non_streaming_mode=True,
             )
             return wavs[0], sample_rate
 

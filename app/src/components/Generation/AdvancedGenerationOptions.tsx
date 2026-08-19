@@ -1,5 +1,5 @@
 import { ChevronDown, CircleHelp, Code2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { UseFormReturn } from 'react-hook-form';
 import {
   Dialog,
@@ -16,14 +16,25 @@ interface AdvancedGenerationOptionsProps {
   form: UseFormReturn<GenerationFormValues>;
 }
 
-function FieldHelp({ text }: { text: string }) {
+function FieldHelp({ label, text }: { label: string; text: string }) {
+  const tooltipId = useId();
+
   return (
-    <span className="group relative inline-flex shrink-0" tabIndex={0}>
+    <button
+      type="button"
+      className="group/help relative inline-flex shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      aria-label={`${label} help`}
+      aria-describedby={tooltipId}
+    >
       <CircleHelp className="h-3.5 w-3.5 text-muted-foreground/70" aria-hidden />
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-[9999] mb-2 hidden w-64 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground shadow-lg group-hover:block group-focus:block">
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none invisible absolute bottom-full left-1/2 z-[9999] mb-2 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-relaxed text-popover-foreground opacity-0 shadow-lg transition-opacity group-hover/help:visible group-hover/help:opacity-100 group-focus-visible/help:visible group-focus-visible/help:opacity-100"
+      >
         {text}
       </span>
-    </span>
+    </button>
   );
 }
 
@@ -61,7 +72,7 @@ function NumberField({
         <FormItem className="space-y-1.5">
           <div className="flex items-center gap-1.5 text-xs font-medium text-foreground/90">
             <span>{label}</span>
-            <FieldHelp text={help} />
+            <FieldHelp label={label} text={help} />
           </div>
           <FormControl>
             <Input
@@ -92,10 +103,10 @@ export function AdvancedGenerationOptions({ form }: AdvancedGenerationOptionsPro
 
   return (
     <>
-      <details className="group mt-3 rounded-2xl border border-border/70 bg-card/40 px-3 py-2">
+      <details className="group/advanced mt-3 rounded-2xl border border-border/70 bg-card/40 px-3 py-2">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-medium text-foreground/90 select-none">
           <span>Advanced Options</span>
-          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open/advanced:rotate-180" />
         </summary>
 
         <div className="mt-3 space-y-4 border-t border-border/60 pt-3">
@@ -209,7 +220,11 @@ export function AdvancedGenerationOptions({ form }: AdvancedGenerationOptionsPro
 
           <div className="space-y-5 text-sm">
             <section>
-              <h3 className="mb-2 font-semibold">All engines</h3>
+              <h3 className="mb-2 font-semibold">Voicebox syntax (all engines)</h3>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Voicebox parses these directives and inserts audio before the selected model output
+                is joined.
+              </p>
               <div className="space-y-2">
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <code className="text-xs">[pause 1200]</code>
@@ -229,9 +244,10 @@ export function AdvancedGenerationOptions({ form }: AdvancedGenerationOptionsPro
             </section>
 
             <section>
-              <h3 className="mb-2 font-semibold">Chatterbox Turbo only</h3>
+              <h3 className="mb-2 font-semibold">Model-native Chatterbox Turbo tags</h3>
               <p className="mb-2 text-xs text-muted-foreground">
-                These are model-supported paralinguistic events. Other engines may read them aloud, ignore them, or behave unpredictably.
+                These are model-supported paralinguistic events. Other engines may read them aloud,
+                ignore them, or behave unpredictably.
               </p>
               <div className="flex flex-wrap gap-2">
                 {[
@@ -245,7 +261,10 @@ export function AdvancedGenerationOptions({ form }: AdvancedGenerationOptionsPro
                   '[shush]',
                   '[clear throat]',
                 ].map((tag) => (
-                  <code key={tag} className="rounded-md border border-border bg-muted/30 px-2 py-1 text-xs">
+                  <code
+                    key={tag}
+                    className="rounded-md border border-border bg-muted/30 px-2 py-1 text-xs"
+                  >
                     {tag}
                   </code>
                 ))}
