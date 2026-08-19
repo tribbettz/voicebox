@@ -54,7 +54,11 @@ async def run_generation(
         get_tts_backend_for_engine,
         load_engine_model,
     )
-    from ..utils.chunked_tts import generate_chunked
+    from ..utils.advanced_tts import (
+        QwenAdvancedBackend,
+        decode_qwen_advanced_instruct,
+        generate_with_advanced_controls,
+    )
     from ..utils.audio import has_tts_runaway, normalize_audio, save_audio, trim_tts_output
 
     task_manager = get_task_manager()
@@ -79,10 +83,16 @@ async def run_generation(
         trim_fn = trim_tts_output if engine_needs_trim(engine) else None
         runaway_detector = has_tts_runaway if engine_retries_runaway(engine) else None
 
+        effective_instruct = instruct
+        if engine == "qwen":
+            qwen_controls, effective_instruct = decode_qwen_advanced_instruct(instruct)
+            if qwen_controls:
+                tts_model = QwenAdvancedBackend(tts_model, qwen_controls)
+
         gen_kwargs: dict = dict(
             language=language,
             seed=seed if mode != "regenerate" else None,
-            instruct=instruct,
+            instruct=effective_instruct,
             trim_fn=trim_fn,
             runaway_detector=runaway_detector,
         )
@@ -91,7 +101,12 @@ async def run_generation(
         if crossfade_ms is not None:
             gen_kwargs["crossfade_ms"] = crossfade_ms
 
-        audio, sample_rate = await generate_chunked(tts_model, text, voice_prompt, **gen_kwargs)
+        audio, sample_rate = await generate_with_advanced_controls(
+            tts_model,
+            text,
+            voice_prompt,
+            **gen_kwargs,
+        )
 
         # --- Normalize (generate and regenerate always; retry skips) -----
         if normalize or mode == "regenerate":
@@ -270,9 +285,9 @@ async def generate_audio_sync(
     when the caller passes ``persist=false`` — they just want the audio
     back in the HTTP response without polluting their history.
 
-    Loads the engine model on demand, runs ``generate_chunked``, optional
-    normalize, then encodes in-memory via :func:`tts.audio_to_wav_bytes`
-    (same helper ``/generate/stream`` uses).
+    Loads the engine model on demand, runs the normal chunking pipeline plus
+    Voicebox's explicit-pause/Qwen advanced layer, optionally normalizes, then
+    encodes in-memory via :func:`tts.audio_to_wav_bytes`.
     """
     from ..backends import (
         engine_needs_trim,
@@ -280,7 +295,11 @@ async def generate_audio_sync(
         get_tts_backend_for_engine,
         load_engine_model,
     )
-    from ..utils.chunked_tts import generate_chunked
+    from ..utils.advanced_tts import (
+        QwenAdvancedBackend,
+        decode_qwen_advanced_instruct,
+        generate_with_advanced_controls,
+    )
     from ..utils.audio import has_tts_runaway, normalize_audio, trim_tts_output
     from . import tts
 
@@ -301,10 +320,16 @@ async def generate_audio_sync(
     trim_fn = trim_tts_output if engine_needs_trim(engine) else None
     runaway_detector = has_tts_runaway if engine_retries_runaway(engine) else None
 
+    effective_instruct = instruct
+    if engine == "qwen":
+        qwen_controls, effective_instruct = decode_qwen_advanced_instruct(instruct)
+        if qwen_controls:
+            tts_model = QwenAdvancedBackend(tts_model, qwen_controls)
+
     gen_kwargs: dict = dict(
         language=language,
         seed=seed,
-        instruct=instruct,
+        instruct=effective_instruct,
         trim_fn=trim_fn,
         runaway_detector=runaway_detector,
     )
@@ -313,8 +338,11 @@ async def generate_audio_sync(
     if crossfade_ms is not None:
         gen_kwargs["crossfade_ms"] = crossfade_ms
 
-    audio, sample_rate = await generate_chunked(
-        tts_model, text, voice_prompt, **gen_kwargs
+    audio, sample_rate = await generate_with_advanced_controls(
+        tts_model,
+        text,
+        voice_prompt,
+        **gen_kwargs,
     )
 
     if normalize:
