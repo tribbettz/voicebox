@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils/cn';
 import { useGenerationStore } from '@/stores/generationStore';
 import { useStoryStore } from '@/stores/storyStore';
 import { useUIStore } from '@/stores/uiStore';
+import { AdvancedGenerationOptions } from './AdvancedGenerationOptions';
 import { EngineModelSelector } from './EngineModelSelector';
 import { ParalinguisticInput } from './ParalinguisticInput';
 
@@ -69,26 +70,22 @@ export function FloatingGenerateBox({
     },
   });
 
-  // Fetch effect presets for the dropdown
   const { data: effectPresets } = useQuery({
     queryKey: ['effectPresets'],
     queryFn: () => apiClient.listEffectPresets(),
   });
 
-  // Calculate if track editor is visible (on stories route with items)
   const hasTrackEditor = isStoriesRoute && currentStory && currentStory.items.length > 0;
 
   const { form, handleSubmit, isPending } = useGenerationForm({
     onSuccess: async (generationId) => {
       setIsExpanded(false);
-      // Defer the story add until TTS completes -- useGenerationProgress handles it
       if (isStoriesRoute && selectedStoryId && generationId) {
         addPendingStoryAdd(generationId, selectedStoryId);
       }
     },
     getEffectsChain: () => {
       if (!selectedPresetId) return undefined;
-      // Profile's own effects chain (no matching preset)
       if (selectedPresetId === '_profile') {
         return selectedProfile?.effects_chain ?? undefined;
       }
@@ -98,19 +95,17 @@ export function FloatingGenerateBox({
     },
   });
 
-  // Click away handler to collapse the box
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       const target = event.target as HTMLElement;
 
-      // Don't collapse if clicking inside the container
       if (containerRef.current?.contains(target)) {
         return;
       }
 
-      // Don't collapse if clicking on a Select dropdown (which renders in a portal)
       if (
         target.closest('[role="listbox"]') ||
+        target.closest('[role="dialog"]') ||
         target.closest('[data-radix-popper-content-wrapper]')
       ) {
         return;
@@ -128,14 +123,12 @@ export function FloatingGenerateBox({
     };
   }, [isExpanded]);
 
-  // Set first voice as default if none selected
   useEffect(() => {
     if (!selectedProfileId && profiles && profiles.length > 0) {
       setSelectedProfileId(profiles[0].id);
     }
   }, [selectedProfileId, profiles, setSelectedProfileId]);
 
-  // Sync engine selection to global store so ProfileList can filter
   const watchedEngine = form.watch('engine');
   useEffect(() => {
     if (watchedEngine) {
@@ -143,7 +136,6 @@ export function FloatingGenerateBox({
     }
   }, [watchedEngine, setSelectedEngine]);
 
-  // Sync generation form language, engine, and effects with selected profile
   type EngineValue =
     | 'qwen'
     | 'luxtts'
@@ -156,25 +148,21 @@ export function FloatingGenerateBox({
     if (selectedProfile?.language) {
       form.setValue('language', selectedProfile.language as LanguageCode);
     }
-    // Auto-switch engine to match the profile
     const engine = selectedProfile?.default_engine ?? selectedProfile?.preset_engine;
     if (engine) {
       form.setValue('engine', engine as EngineValue);
     } else if (selectedProfile && selectedProfile.voice_type !== 'preset') {
-      // Cloned/designed profile with no default — ensure a compatible (non-preset) engine
       const currentEngine = form.getValues('engine');
       const presetEngines = new Set(['kokoro', 'qwen_custom_voice']);
       if (currentEngine && presetEngines.has(currentEngine)) {
         form.setValue('engine', 'qwen');
       }
     }
-    // Pre-fill effects from profile defaults
     if (
       selectedProfile?.effects_chain &&
       selectedProfile.effects_chain.length > 0 &&
       effectPresets
     ) {
-      // Try to match against a known preset
       const profileChainJson = JSON.stringify(selectedProfile.effects_chain);
       const matchingPreset = effectPresets.find(
         (p) => JSON.stringify(p.effects_chain) === profileChainJson,
@@ -182,7 +170,6 @@ export function FloatingGenerateBox({
       if (matchingPreset) {
         setSelectedPresetId(matchingPreset.id);
       } else {
-        // No matching preset — use special value to pass profile chain directly
         setSelectedPresetId('_profile');
       }
     } else if (
@@ -191,23 +178,20 @@ export function FloatingGenerateBox({
     ) {
       setSelectedPresetId(null);
     }
-    // Persona toggle only applies when the profile has a personality prompt.
     if (selectedProfile && !selectedProfile.personality?.trim()) {
       form.setValue('personality', false);
     }
   }, [selectedProfile, effectPresets, form]);
 
-  // Auto-resize textarea based on content (only when expanded)
   useEffect(() => {
     if (!isExpanded) {
-      // Reset textarea height after collapse animation completes
       const timeoutId = setTimeout(() => {
         const textarea = textareaRef.current;
         if (textarea) {
           textarea.style.height = '32px';
           textarea.style.overflowY = 'hidden';
         }
-      }, 200); // Wait for animation to complete
+      }, 200);
       return () => clearTimeout(timeoutId);
     }
 
@@ -217,12 +201,11 @@ export function FloatingGenerateBox({
     const adjustHeight = () => {
       textarea.style.height = 'auto';
       const scrollHeight = textarea.scrollHeight;
-      const minHeight = 100; // Expanded minimum
-      const maxHeight = 300; // Max height in pixels
+      const minHeight = 100;
+      const maxHeight = 300;
       const targetHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
       textarea.style.height = `${targetHeight}px`;
 
-      // Show scrollbar if content exceeds max height
       if (scrollHeight > maxHeight) {
         textarea.style.overflowY = 'auto';
       } else {
@@ -230,15 +213,11 @@ export function FloatingGenerateBox({
       }
     };
 
-    // Small delay to let framer animation complete
     const timeoutId = setTimeout(() => {
       adjustHeight();
     }, 200);
 
-    // Adjust on mount and when value changes
     adjustHeight();
-
-    // Watch for input changes
     textarea.addEventListener('input', adjustHeight);
 
     return () => {
@@ -257,13 +236,10 @@ export function FloatingGenerateBox({
       className={cn(
         'fixed',
         isStoriesRoute
-          ? // Aligned with StoryContent: sidebar + list width + gap (tab bleeds with -mx-8)
-            'left-[calc(5rem+360px+1.5rem)] right-8'
+          ? 'left-[calc(5rem+360px+1.5rem)] right-8'
           : 'left-[calc(5rem+2rem)] right-8 lg:right-auto lg:w-[calc((100%-5rem-4rem)/2-1rem)]',
       )}
       style={{
-        // On stories route: offset by track editor height when visible
-        // On other routes: offset by audio player height when visible
         bottom: hasTrackEditor
           ? `${trackEditorHeight + 24}px`
           : isPlayerOpen
@@ -286,9 +262,7 @@ export function FloatingGenerateBox({
                     <FormItem>
                       <FormControl>
                         <motion.div
-                          animate={{
-                            height: isExpanded ? 'auto' : '32px',
-                          }}
+                          animate={{ height: isExpanded ? 'auto' : '32px' }}
                           transition={{ duration: 0.15, ease: 'easeOut' }}
                           style={{ overflow: 'hidden' }}
                         >
@@ -298,9 +272,7 @@ export function FloatingGenerateBox({
                               onChange={field.onChange}
                               placeholder={
                                 isStoriesRoute && currentStory
-                                  ? t('generation.placeholder.storyWithEffects', {
-                                      name: currentStory.name,
-                                    })
+                                  ? t('generation.placeholder.storyWithEffects', { name: currentStory.name })
                                   : selectedProfile
                                     ? t('generation.placeholder.effectsHint')
                                     : t('generation.placeholder.selectVoice')
@@ -328,9 +300,7 @@ export function FloatingGenerateBox({
                                 isStoriesRoute && currentStory
                                   ? t('generation.placeholder.story', { name: currentStory.name })
                                   : selectedProfile
-                                    ? t('generation.placeholder.profile', {
-                                        name: selectedProfile.name,
-                                      })
+                                    ? t('generation.placeholder.profile', { name: selectedProfile.name })
                                     : t('generation.placeholder.selectVoice')
                               }
                               className="resize-none bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus:ring-0 outline-none ring-0 rounded-2xl text-sm placeholder:text-muted-foreground/60 w-full"
@@ -352,7 +322,6 @@ export function FloatingGenerateBox({
               </motion.div>
 
               <div className="flex items-start gap-2 shrink-0">
-                {/* Compose — fills the textarea with a fresh in-character line. */}
                 <AnimatePresence>
                   {selectedProfile?.personality?.trim() && (
                     <motion.div
@@ -389,7 +358,6 @@ export function FloatingGenerateBox({
                   )}
                 </AnimatePresence>
 
-                {/* Persona — rewrite input through the profile's personality LLM before TTS. */}
                 <AnimatePresence>
                   {selectedProfile?.personality?.trim() && (
                     <motion.div
@@ -418,13 +386,19 @@ export function FloatingGenerateBox({
                                         ? 'bg-accent text-accent-foreground border border-accent hover:bg-accent/90'
                                         : 'bg-card border border-border hover:bg-background/50',
                                     )}
-                                    aria-label={active ? t('generation.persona.ariaLabelActive') : t('generation.persona.ariaLabelInactive')}
+                                    aria-label={
+                                      active
+                                        ? t('generation.persona.ariaLabelActive')
+                                        : t('generation.persona.ariaLabelInactive')
+                                    }
                                     aria-pressed={active}
                                   >
                                     <Wand2 className="h-4 w-4" />
                                   </Button>
                                   <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground border border-border opacity-0 transition-opacity group-hover:opacity-100 z-[9999]">
-                                    {active ? t('generation.persona.tooltipActive') : t('generation.persona.tooltipInactive')}
+                                    {active
+                                      ? t('generation.persona.tooltipActive')
+                                      : t('generation.persona.tooltipInactive')}
                                   </span>
                                 </div>
                               </FormControl>
@@ -436,7 +410,6 @@ export function FloatingGenerateBox({
                   )}
                 </AnimatePresence>
 
-                {/* Instruct toggle — only for Qwen CustomVoice, which actually honors the kwarg */}
                 <AnimatePresence>
                   {isExpanded && form.watch('engine') === 'qwen_custom_voice' && (
                     <motion.div
@@ -505,7 +478,6 @@ export function FloatingGenerateBox({
               </div>
             </div>
 
-            {/* Additive instruct textarea — shown below main text when toggle is on and engine supports it */}
             <AnimatePresence>
               {isInstructExpanded && form.watch('engine') === 'qwen_custom_voice' && (
                 <motion.div
@@ -537,6 +509,8 @@ export function FloatingGenerateBox({
               )}
             </AnimatePresence>
 
+            {isExpanded && <AdvancedGenerationOptions form={form} />}
+
             <AnimatePresence>
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
@@ -565,7 +539,6 @@ export function FloatingGenerateBox({
                       </Select>
                     </div>
                   )}
-
 
                   <FormField
                     control={form.control}
