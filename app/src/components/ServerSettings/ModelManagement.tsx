@@ -69,6 +69,8 @@ const MODEL_DESCRIPTIONS: Record<string, string> = {
     'HumeAI TADA 3B Multilingual — built on Llama 3.2 3B. Supports 10 languages with high-fidelity voice cloning via text-acoustic dual alignment.',
   kokoro:
     'Kokoro 82M by hexgrad. Tiny 82M-parameter TTS that runs at CPU realtime. Supports 8 languages with pre-built voice styles. Apache 2.0 licensed.',
+  'indextts-2.5':
+    'Expressive zero-shot voice cloning with independent emotion control. Supports Chinese, English, Japanese, Spanish, and Arabic.',
   'qwen-custom-voice-1.7B':
     'Qwen3-TTS CustomVoice 1.7B by Alibaba. 9 premium preset voices with instruct-based style control for tone, emotion, and prosody. Supports 10 languages.',
   'qwen-custom-voice-0.6B':
@@ -414,7 +416,8 @@ export function ModelManagement() {
         m.model_name.startsWith('luxtts') ||
         m.model_name.startsWith('chatterbox') ||
         m.model_name.startsWith('tada') ||
-        m.model_name.startsWith('kokoro'),
+        m.model_name.startsWith('kokoro') ||
+        m.model_name.startsWith('indextts'),
     ) ?? [];
   const whisperModels = modelStatus?.models.filter((m) => m.model_name.startsWith('whisper')) ?? [];
   const llmModels = modelStatus?.models.filter((m) => m.model_name.startsWith('qwen3-')) ?? [];
@@ -568,7 +571,7 @@ export function ModelManagement() {
                           (() => {
                             const dl = downloadProgressMap.get(model.model_name);
                             const pct = dl?.progress ?? 0;
-                            const hasProgress = dl && dl.total && dl.total > 0;
+                            const hasProgress = dl?.total && dl.total > 0;
                             return (
                               <div className="mt-1 space-y-0.5">
                                 <Progress value={hasProgress ? pct : undefined} className="h-1" />
@@ -597,6 +600,11 @@ export function ModelManagement() {
                         {model.downloaded && !isDownloading && !hasError && (
                           <span className="text-xs text-muted-foreground">
                             {formatSize(model.size_mb)}
+                          </span>
+                        )}
+                        {!model.downloaded && model.expected_size_mb && !isDownloading && !hasError && (
+                          <span className="text-xs text-muted-foreground">
+                            ≈{formatSize(model.expected_size_mb)}
                           </span>
                         )}
 
@@ -722,9 +730,9 @@ export function ModelManagement() {
                 )}
 
                 {/* Description */}
-                {MODEL_DESCRIPTIONS[freshSelectedModel.model_name] && (
+                {(freshSelectedModel.description || MODEL_DESCRIPTIONS[freshSelectedModel.model_name]) && (
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    {MODEL_DESCRIPTIONS[freshSelectedModel.model_name]}
+                    {freshSelectedModel.description || MODEL_DESCRIPTIONS[freshSelectedModel.model_name]}
                   </p>
                 )}
 
@@ -799,6 +807,12 @@ export function ModelManagement() {
                     </span>
                   </div>
                 )}
+                {!freshSelectedModel.downloaded && freshSelectedModel.expected_size_mb && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <HardDrive className="h-3.5 w-3.5" />
+                    <span>Approximate download: {formatSize(freshSelectedModel.expected_size_mb)}</span>
+                  </div>
+                )}
 
                 {/* Error detail */}
                 {selectedError?.error && (
@@ -840,7 +854,7 @@ export function ModelManagement() {
                             ? downloadProgressMap.get(freshSelectedModel.model_name)
                             : undefined;
                           const pct = dl?.progress ?? 0;
-                          const hasProgress = dl && dl.total && dl.total > 0;
+                          const hasProgress = dl?.total && dl.total > 0;
                           return (
                             <>
                               <Progress value={hasProgress ? pct : undefined} className="h-2" />

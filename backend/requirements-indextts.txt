@@ -1,0 +1,36 @@
+# IndexTTS 2.5 worker environment. The first four packages intentionally reuse
+# Voicebox's tested CUDA stack through venv --system-site-packages.
+torch==2.10.0
+torchaudio==2.10.0
+numpy==1.26.4
+numba==0.67.0
+
+# Upstream-compatible packages isolated from Voicebox/Qwen. In particular,
+# Transformers 4.52.1 is required by IndexTTS's vendored generation helpers.
+accelerate==1.8.1
+cn2an==0.5.22
+descript-audiotools==0.7.2
+einops==0.8.1
+ffmpeg-python==0.2.0
+fugashi==1.5.2
+g2p-en==2.1.0
+jieba==0.42.1
+json5==0.10.0
+librosa==0.10.2.post1
+llvmlite==0.49.0
+matplotlib==3.10.0
+modelscope==1.27.0
+munch==4.0.0
+nltk==3.9.1
+omegaconf==2.3.0
+openai-whisper==20250625
+pynini==2.1.6
+safetensors==0.5.2
+sentencepiece==0.2.1
+textstat==0.7.10
+tiktoken==0.13.0
+tokenizers==0.21.0
+torchcodec==0.10.0
+transformers==4.52.1
+unidic-lite==1.0.8
+WeTextProcessing==1.0.4.1

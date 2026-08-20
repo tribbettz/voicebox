@@ -65,20 +65,51 @@ export interface EffectConfig {
   params: Record<string, number>;
 }
 
+export type TTSEngine =
+  | 'qwen'
+  | 'qwen_custom_voice'
+  | 'luxtts'
+  | 'chatterbox'
+  | 'chatterbox_turbo'
+  | 'tada'
+  | 'kokoro'
+  | 'indextts';
+
+export type IndexTTSEmotionMode = 'natural' | 'auto' | 'instruction' | 'vector' | 'audio';
+
+export interface IndexTTSEmotionVector {
+  happy: number;
+  angry: number;
+  sad: number;
+  afraid: number;
+  disgusted: number;
+  melancholic: number;
+  surprised: number;
+  calm: number;
+}
+
+export interface IndexTTSOptions {
+  emotion_mode: IndexTTSEmotionMode;
+  emotion_text?: string;
+  emotion_vector?: IndexTTSEmotionVector;
+  emotion_audio_asset_id?: string;
+  emo_alpha: number;
+  use_random: boolean;
+  duration_factor: number;
+}
+
+export interface EngineOptions {
+  indextts?: IndexTTSOptions;
+}
+
 export interface GenerationRequest {
   profile_id: string;
   text: string;
   language: LanguageCode;
   seed?: number;
   model_size?: '1.7B' | '0.6B' | '1B' | '3B';
-  engine?:
-    | 'qwen'
-    | 'qwen_custom_voice'
-    | 'luxtts'
-    | 'chatterbox'
-    | 'chatterbox_turbo'
-    | 'tada'
-    | 'kokoro';
+  engine?: TTSEngine;
+  engine_options?: EngineOptions;
   instruct?: string;
   /** When true and the profile has a personality prompt, input text is rewritten in-character before TTS. */
   personality?: boolean;
@@ -110,6 +141,7 @@ export interface GenerationResponse {
   instruct?: string;
   engine?: string;
   model_size?: string;
+  engine_options?: EngineOptions;
   status: 'loading_model' | 'generating' | 'completed' | 'failed';
   error?: string;
   is_favorited?: boolean;
@@ -329,11 +361,20 @@ export interface ModelProgress {
 export interface ModelStatus {
   model_name: string;
   display_name: string;
+  description?: string;
   hf_repo_id?: string; // HuggingFace repository ID
   downloaded: boolean;
   downloading: boolean; // True if download is in progress
   size_mb?: number;
+  expected_size_mb?: number;
   loaded: boolean;
+}
+
+export interface GenerationAssetResponse {
+  id: string;
+  filename: string;
+  duration: number;
+  expires_at: string;
 }
 
 export interface HuggingFaceModelInfo {

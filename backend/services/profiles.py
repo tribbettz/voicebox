@@ -1,11 +1,11 @@
 """Voice profile management module."""
 
+import asyncio
 import json as _json
 import logging
 import shutil
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ from ..utils.images import process_avatar, validate_image
 
 logger = logging.getLogger(__name__)
 
-CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada"}
+CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada", "indextts"}
 
 
 def _profile_to_response(
@@ -129,6 +129,8 @@ def validate_profile_engine(profile, engine: str) -> None:
         design_prompt = getattr(profile, "design_prompt", None)
         if not design_prompt or not design_prompt.strip():
             raise ValueError(f"Designed profile {profile.id} is missing design_prompt")
+        if engine == "indextts":
+            raise ValueError("IndexTTS requires a cloned profile with a speaker reference sample")
         return
 
     if engine not in CLONING_ENGINES:
@@ -577,6 +579,34 @@ async def create_voice_prompt_for_profile(
         raise ValueError(f"No samples found for profile {profile_id}")
 
     tts_model = get_tts_backend_for_engine(engine)
+
+    if engine == "indextts":
+        # IndexTTS accepts one speaker prompt and truncates it to 15 seconds.
+        # Pick the longest useful sample (duration capped at that upstream
+        # limit), with sample ID as a stable tie-breaker. Concatenating every
+        # profile sample would make the selected voice depend on arbitrary
+        # ordering and upstream would discard everything after 15 seconds.
+        import soundfile as sf
+
+        candidates = []
+        for sample in samples:
+            sample_audio_path = config.resolve_storage_path(sample.audio_path)
+            if sample_audio_path is None or not sample_audio_path.is_file():
+                raise ValueError(f"Sample audio not found for profile {profile_id}")
+            info = await asyncio.to_thread(sf.info, str(sample_audio_path))
+            usable_duration = min(float(info.duration), 15.0)
+            candidates.append((-usable_duration, sample.id, sample, sample_audio_path))
+        _duration_key, _sample_id, selected, selected_path = min(candidates)
+        logger.info(
+            "IndexTTS selected profile sample %s (longest useful reference, 15s cap)",
+            selected.id,
+        )
+        voice_prompt, _ = await tts_model.create_voice_prompt(
+            str(selected_path),
+            selected.reference_text,
+            use_cache=use_cache,
+        )
+        return voice_prompt
 
     if len(samples) == 1:
         sample = samples[0]

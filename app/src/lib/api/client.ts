@@ -9,6 +9,7 @@ import type {
   EffectPresetCreate,
   EffectPresetResponse,
   GenerationRequest,
+  GenerationAssetResponse,
   GenerationResponse,
   GenerationVersionResponse,
   HealthResponse,
@@ -251,6 +252,20 @@ class ApiClient {
   }
 
   // Generation
+  async uploadEmotionAudio(file: File): Promise<GenerationAssetResponse> {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`${this.getBaseUrl()}/generation-assets/emotion-audio`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+    }
+    return response.json();
+  }
+
   async generateSpeech(data: GenerationRequest): Promise<GenerationResponse> {
     return this.request<GenerationResponse>('/generate', {
       method: 'POST',

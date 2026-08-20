@@ -10,6 +10,7 @@
     "voice-profiles",
     "tts-generation",
     "tts-engines",
+    "indextts",
     "effects-pipeline",
     "history",
     "stories",

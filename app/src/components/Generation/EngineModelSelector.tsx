@@ -11,12 +11,16 @@ import {
 import type { VoiceProfileResponse } from '@/lib/api/types';
 import { getLanguageOptionsForEngine } from '@/lib/constants/languages';
 import type { GenerationFormValues } from '@/lib/hooks/useGenerationForm';
+import {
+  INDEXTTS_GENERATION_ENGINE_OPTION,
+  isIndexTTSProfileTypeCompatible,
+} from '@/lib/utils/indexTts';
 
 /**
  * Engine/model options and their display metadata.
  * Adding a new engine means adding one entry here.
  */
-const ENGINE_OPTIONS = [
+export const ENGINE_OPTIONS = [
   { value: 'qwen:1.7B', label: 'Qwen3-TTS 1.7B', engine: 'qwen' },
   { value: 'qwen:0.6B', label: 'Qwen3-TTS 0.6B', engine: 'qwen' },
   { value: 'qwen_custom_voice:1.7B', label: 'Qwen CustomVoice 1.7B', engine: 'qwen_custom_voice' },
@@ -27,6 +31,7 @@ const ENGINE_OPTIONS = [
   { value: 'tada:1B', label: 'TADA 1B', engine: 'tada' },
   { value: 'tada:3B', label: 'TADA 3B Multilingual', engine: 'tada' },
   { value: 'kokoro', label: 'Kokoro 82M', engine: 'kokoro' },
+  INDEXTTS_GENERATION_ENGINE_OPTION,
 ] as const;
 
 const ENGINE_DESCRIPTIONS: Record<string, string> = {
@@ -37,13 +42,21 @@ const ENGINE_DESCRIPTIONS: Record<string, string> = {
   chatterbox_turbo: 'English, [laugh] [cough] tags',
   tada: 'HumeAI, 700s+ coherent audio',
   kokoro: '82M params, CPU realtime, 8 langs',
+  indextts: 'Expressive cloning, independent emotion control',
 };
 
 /** Engines that only support English and should force language to 'en' on select. */
 const ENGLISH_ONLY_ENGINES = new Set(['luxtts', 'chatterbox_turbo']);
 
 /** Engines that support cloned (reference audio) profiles. */
-const CLONING_ENGINES = new Set(['qwen', 'luxtts', 'chatterbox', 'chatterbox_turbo', 'tada']);
+const CLONING_ENGINES = new Set([
+  'qwen',
+  'luxtts',
+  'chatterbox',
+  'chatterbox_turbo',
+  'tada',
+  'indextts',
+]);
 
 function getAvailableOptions(selectedProfile?: VoiceProfileResponse | null) {
   if (!selectedProfile) return ENGINE_OPTIONS;
@@ -164,6 +177,7 @@ export function isProfileCompatibleWithEngine(
   engine: string,
 ): boolean {
   const voiceType = profile.voice_type || 'cloned';
+  if (engine === 'indextts') return isIndexTTSProfileTypeCompatible(voiceType);
   if (voiceType === 'preset') return profile.preset_engine === engine;
   if (voiceType === 'cloned') return CLONING_ENGINES.has(engine);
   return true; // designed — future

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -24,6 +25,53 @@ router = APIRouter()
 IMPORTED_AUDIO_PROFILE_NAME = "Imported Audio"
 IMPORT_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".webm"}
 IMPORT_AUDIO_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+
+
+@router.post("/generation-assets/emotion-audio", response_model=models.GenerationAssetResponse)
+async def upload_emotion_audio(file: UploadFile = File(...)):
+    """Upload and normalize a bounded-lifetime IndexTTS emotion reference."""
+    from ..services.generation_assets import (
+        EMOTION_ASSET_EXTENSIONS,
+        EMOTION_ASSET_MAX_BYTES,
+        store_emotion_audio_asset,
+    )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in EMOTION_ASSET_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format '{suffix}'. Allowed: {sorted(EMOTION_ASSET_EXTENSIONS)}",
+        )
+
+    temp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    temp_path = Path(temp.name)
+    total = 0
+    try:
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > EMOTION_ASSET_MAX_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds {EMOTION_ASSET_MAX_BYTES // (1024 * 1024)} MB limit.",
+                )
+            temp.write(chunk)
+        temp.close()
+        if total == 0:
+            raise HTTPException(status_code=400, detail="Empty audio file.")
+        try:
+            asset_id, duration, expires_at = await store_emotion_audio_asset(str(temp_path))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return models.GenerationAssetResponse(
+            id=asset_id,
+            filename=Path(file.filename or "emotion-reference").name,
+            duration=duration,
+            expires_at=expires_at,
+        )
+    finally:
+        if not temp.closed:
+            temp.close()
+        temp_path.unlink(missing_ok=True)
 
 
 def _get_or_create_import_profile(db: Session) -> DBVoiceProfile:
@@ -53,6 +101,28 @@ def _resolve_generation_engine(data: models.GenerationRequest, profile) -> str:
     return data.engine or getattr(profile, "default_engine", None) or getattr(profile, "preset_engine", None) or "qwen"
 
 
+def _serialize_engine_options(data: models.GenerationRequest, engine: str) -> dict | None:
+    if engine == "indextts":
+        options = data.engine_options or models.EngineOptions(indextts=models.IndexTTSOptions())
+        if options.indextts is None:
+            options = models.EngineOptions(indextts=models.IndexTTSOptions())
+        return options.model_dump(mode="json", exclude_none=True)
+    if data.engine_options and data.engine_options.indextts is not None:
+        raise HTTPException(status_code=400, detail="IndexTTS options require engine='indextts'")
+    return None
+
+
+def _validate_engine_language(engine: str, language: str) -> None:
+    from ..backends import get_tts_model_configs
+
+    supported = {lang for cfg in get_tts_model_configs() if cfg.engine == engine for lang in cfg.languages}
+    if supported and language not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Engine '{engine}' does not support language '{language}'. Supported: {', '.join(sorted(supported))}",
+        )
+
+
 @router.post("/generate", response_model=models.GenerationResponse)
 async def generate_speech(
     data: models.GenerationRequest,
@@ -69,12 +139,14 @@ async def generate_speech(
     from ..backends import engine_has_model_sizes
 
     engine = _resolve_generation_engine(data, profile)
+    _validate_engine_language(engine, data.language)
     try:
         profiles.validate_profile_engine(profile, engine)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     model_size = (data.model_size or "1.7B") if engine_has_model_sizes(engine) else None
+    engine_options = _serialize_engine_options(data, engine)
 
     text = data.text
     source = "manual"
@@ -101,6 +173,7 @@ async def generate_speech(
         status="generating",
         engine=engine,
         model_size=model_size if engine_has_model_sizes(engine) else None,
+        engine_options=engine_options,
         source=source,
     )
 
@@ -136,6 +209,7 @@ async def generate_speech(
             normalize=data.normalize,
             effects_chain=effects_chain_config,
             instruct=data.instruct,
+            engine_options=engine_options,
             mode="generate",
             max_chunk_chars=data.max_chunk_chars,
             crossfade_ms=data.crossfade_ms,
@@ -180,6 +254,7 @@ async def retry_generation(generation_id: str, db: Session = Depends(get_db)):
             model_size=gen.model_size or "1.7B",
             seed=gen.seed,
             instruct=gen.instruct,
+            engine_options=gen.engine_options,
             mode="retry",
         )
     )
@@ -224,6 +299,7 @@ async def regenerate_generation(generation_id: str, db: Session = Depends(get_db
             model_size=gen.model_size or "1.7B",
             seed=gen.seed,
             instruct=gen.instruct,
+            engine_options=gen.engine_options,
             mode="regenerate",
             version_id=version_id,
         )
@@ -334,12 +410,14 @@ async def stream_speech(
         raise HTTPException(status_code=404, detail="Profile not found")
 
     engine = _resolve_generation_engine(data, profile)
+    _validate_engine_language(engine, data.language)
     try:
         profiles.validate_profile_engine(profile, engine)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     tts_model = get_tts_backend_for_engine(engine)
     model_size = data.model_size or "1.7B"
+    engine_options = _serialize_engine_options(data, engine)
 
     await ensure_model_cached_or_raise(engine, model_size)
     await load_engine_model(engine, model_size)
@@ -376,6 +454,7 @@ async def stream_speech(
         language=data.language,
         seed=data.seed,
         instruct=effective_instruct,
+        engine_options=engine_options,
         max_chunk_chars=data.max_chunk_chars,
         crossfade_ms=data.crossfade_ms,
         final_tail_ms=QWEN_FINAL_TAIL_MS if engine == "qwen" else 0,

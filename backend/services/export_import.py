@@ -8,6 +8,7 @@ Also handles exporting individual generations.
 import json
 import zipfile
 import io
+import uuid
 from pathlib import Path
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -87,6 +88,12 @@ def export_profile_to_zip(profile_id: str, db: Session) -> bytes:
                 "name": profile.name,
                 "description": profile.description,
                 "language": profile.language,
+                "voice_type": getattr(profile, "voice_type", None) or "cloned",
+                "preset_engine": getattr(profile, "preset_engine", None),
+                "preset_voice_id": getattr(profile, "preset_voice_id", None),
+                "design_prompt": getattr(profile, "design_prompt", None),
+                "default_engine": getattr(profile, "default_engine", None),
+                "personality": getattr(profile, "personality", None),
             },
             "has_avatar": has_avatar,
         }
@@ -173,6 +180,12 @@ async def import_profile_from_zip(file_bytes: bytes, db: Session) -> VoiceProfil
                 name=unique_name,
                 description=profile_data.get("description"),
                 language=profile_data.get("language", "en"),
+                voice_type=profile_data.get("voice_type", "cloned"),
+                preset_engine=profile_data.get("preset_engine"),
+                preset_voice_id=profile_data.get("preset_voice_id"),
+                design_prompt=profile_data.get("design_prompt"),
+                default_engine=profile_data.get("default_engine"),
+                personality=profile_data.get("personality"),
             )
             
             profile = await create_profile(profile_create, db)
@@ -274,6 +287,25 @@ def export_generation_to_zip(generation_id: str, db: Session) -> bytes:
         .all()
     )
 
+    emotion_asset_path = None
+    engine_options = generation.engine_options
+    if (generation.engine or "qwen") == "indextts" and engine_options:
+        from ..models import EngineOptions
+        from .generation_assets import resolve_emotion_audio_asset
+
+        validated_options = EngineOptions.model_validate(engine_options)
+        index_options = validated_options.indextts
+        if index_options and index_options.emotion_mode.value == "audio":
+            try:
+                emotion_asset_path = resolve_emotion_audio_asset(
+                    str(index_options.emotion_audio_asset_id)
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "This generation's emotion reference audio has expired; "
+                    "upload it again before exporting."
+                ) from exc
+
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
     
@@ -302,6 +334,9 @@ def export_generation_to_zip(generation_id: str, db: Session) -> bytes:
                 "duration": generation.duration,
                 "seed": generation.seed,
                 "instruct": generation.instruct,
+                "engine": generation.engine,
+                "model_size": generation.model_size,
+                "engine_options": engine_options,
                 "created_at": generation.created_at.isoformat(),
             },
             "profile": {
@@ -311,6 +346,11 @@ def export_generation_to_zip(generation_id: str, db: Session) -> bytes:
                 "language": profile.language,
             },
             "versions": version_entries,
+            "generation_assets": {
+                "emotion_audio": "assets/emotion-reference.wav"
+                if emotion_asset_path is not None
+                else None,
+            },
         }
         zip_file.writestr("manifest.json", json.dumps(manifest, indent=2))
         
@@ -325,6 +365,9 @@ def export_generation_to_zip(generation_id: str, db: Session) -> bytes:
             audio_path = config.resolve_storage_path(generation.audio_path)
             if audio_path is not None and audio_path.exists():
                 zip_file.write(audio_path, f"audio/{audio_path.name}")
+
+        if emotion_asset_path is not None:
+            zip_file.write(emotion_asset_path, "assets/emotion-reference.wav")
     
     zip_buffer.seek(0)
     return zip_buffer.read()
@@ -371,6 +414,7 @@ async def import_generation_from_zip(file_bytes: bytes, db: Session) -> dict:
             
             generation_data = manifest_data["generation"]
             profile_data = manifest_data.get("profile", {})
+            generation_assets = manifest_data.get("generation_assets", {})
             
             # Validate required fields
             required_fields = ["text", "language", "duration"]
@@ -416,11 +460,37 @@ async def import_generation_from_zip(file_bytes: bytes, db: Session) -> dict:
                 generations_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Generate new ID for this generation
-                new_generation_id = str(__import__('uuid').uuid4())
+                new_generation_id = str(uuid.uuid4())
                 
                 # Copy audio to generations directory
                 audio_dest = generations_dir / f"{new_generation_id}.wav"
                 shutil.copy(tmp_path, audio_dest)
+
+                engine = generation_data.get("engine") or "qwen"
+                engine_options = generation_data.get("engine_options")
+                if engine == "indextts" and engine_options:
+                    from ..models import EngineOptions
+                    from .generation_assets import store_emotion_audio_asset
+
+                    validated_options = EngineOptions.model_validate(engine_options)
+                    index_options = validated_options.indextts
+                    if index_options and index_options.emotion_mode.value == "audio":
+                        asset_member = generation_assets.get("emotion_audio")
+                        if not asset_member or asset_member not in namelist:
+                            raise ValueError(
+                                "IndexTTS generation archive is missing its emotion reference audio"
+                            )
+                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as asset_tmp:
+                            asset_tmp.write(zip_file.read(asset_member))
+                            asset_tmp_path = asset_tmp.name
+                        try:
+                            new_asset_id, _asset_duration, _expires_at = (
+                                await store_emotion_audio_asset(asset_tmp_path)
+                            )
+                        finally:
+                            Path(asset_tmp_path).unlink(missing_ok=True)
+                        index_options.emotion_audio_asset_id = uuid.UUID(new_asset_id)
+                    engine_options = validated_options.model_dump(mode="json", exclude_none=True)
                 
                 # Create generation record
                 db_generation = DBGeneration(
@@ -432,6 +502,9 @@ async def import_generation_from_zip(file_bytes: bytes, db: Session) -> dict:
                     duration=generation_data["duration"],
                     seed=generation_data.get("seed"),
                     instruct=generation_data.get("instruct"),
+                    engine=engine,
+                    model_size=generation_data.get("model_size"),
+                    engine_options=engine_options,
                     created_at=datetime.utcnow(),
                 )
                 

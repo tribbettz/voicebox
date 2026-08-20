@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ============================================================
 # Voicebox — Local TTS Server with Web UI
 # 3-stage build: Frontend → Python deps → Runtime
@@ -44,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip
+RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade pip
 
 COPY backend/requirements.txt .
 
@@ -53,8 +54,8 @@ ARG ROCM_VERSION=6.3
 
 # For ROCm, make the PyTorch ROCm index primary so every install below resolves
 # torch to ROCm wheels instead of the default CUDA build.
-RUN if [ "$PYTORCH_VARIANT" = "rocm" ]; then \
-      pip install --no-cache-dir --prefix=/install \
+RUN --mount=type=cache,target=/root/.cache/pip if [ "$PYTORCH_VARIANT" = "rocm" ]; then \
+      pip install --prefix=/install \
         --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}" \
         torch torchaudio && \
       printf '[global]\nindex-url = https://download.pytorch.org/whl/rocm%s\nextra-index-url = https://pypi.org/simple\n' "$ROCM_VERSION" > /etc/pip.conf; \
@@ -69,15 +70,15 @@ RUN printf 'torch==2.10.0\ntorchaudio==2.10.0\n' \
 
 ENV PIP_CONSTRAINT=/tmp/voicebox-pytorch-constraints.txt
 
-RUN pip install --no-cache-dir --prefix=/install \
+RUN --mount=type=cache,target=/root/.cache/pip pip install --prefix=/install \
     torch==2.10.0 \
     torchaudio==2.10.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-RUN pip install --no-cache-dir --prefix=/install --no-deps chatterbox-tts
-RUN pip install --no-cache-dir --prefix=/install --no-deps hume-tada
-RUN pip install --no-cache-dir --prefix=/install \
+RUN --mount=type=cache,target=/root/.cache/pip pip install --prefix=/install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install --prefix=/install --no-deps chatterbox-tts
+RUN --mount=type=cache,target=/root/.cache/pip pip install --prefix=/install --no-deps hume-tada
+RUN --mount=type=cache,target=/root/.cache/pip pip install --prefix=/install \
     git+https://github.com/QwenLM/Qwen3-TTS.git
 
 
@@ -99,6 +100,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy installed Python packages from builder stage
 COPY --from=backend-builder /install /usr/local
+
+# IndexTTS pins Transformers 4.52.1 while Qwen uses 4.57.3. Keep only the
+# IndexTTS Python layer in a system-site-packages venv: Torch/Torchaudio/CUDA
+# remain the exact Voicebox 2.10/cu128 installation above and are not duplicated.
+COPY backend/requirements-indextts.txt /tmp/requirements-indextts.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m venv --system-site-packages /opt/indextts-venv && \
+    /opt/indextts-venv/bin/pip install -r /tmp/requirements-indextts.txt && \
+    /opt/indextts-venv/bin/pip install --no-deps --force-reinstall \
+      https://github.com/index-tts/index-tts/archive/ee40fa7d6c6b8a2c7f06105f9f1e65775b74868c.tar.gz && \
+    mkdir -p /opt/indextts-venv/lib/python3.11/site-packages/indextts/utils/tagger_cache && \
+    chown -R voicebox:voicebox \
+      /opt/indextts-venv/lib/python3.11/site-packages/indextts/utils/tagger_cache && \
+    /opt/indextts-venv/bin/python -c \
+      "import torch, torchaudio, transformers; assert torch.__version__.startswith('2.10.0'); assert torchaudio.__version__.startswith('2.10.0'); assert transformers.__version__ == '4.52.1'"
 
 # Copy backend application code
 COPY --chown=voicebox:voicebox backend/ /app/backend/

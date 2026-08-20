@@ -252,13 +252,14 @@ async def get_model_status():
             "display_name": cfg.display_name,
             "hf_repo_id": cfg.hf_repo_id,
             "model_size": cfg.model_size,
+            "description": cfg.description,
+            "expected_size_mb": cfg.size_mb or None,
+            "backend_managed": cfg.backend_managed,
+            "registry_config": cfg,
             "check_loaded": lambda c=cfg: check_model_loaded(c),
         }
         for cfg in registry_configs
     ]
-
-    model_to_repo = {cfg["model_name"]: cfg["hf_repo_id"] for cfg in model_configs}
-    active_download_repos = {model_to_repo.get(name) for name in active_download_names if name in model_to_repo}
 
     cache_info = None
     if use_scan_cache:
@@ -275,7 +276,14 @@ async def get_model_status():
             size_mb = None
             loaded = False
 
-            if cache_info:
+            if config["backend_managed"]:
+                from ..backends import get_tts_backend_for_engine
+
+                managed_backend = get_tts_backend_for_engine(config["registry_config"].engine)
+                downloaded = managed_backend._is_model_cached(config["model_size"])
+                size_mb = managed_backend.get_downloaded_size_mb()
+
+            if cache_info and not config["backend_managed"]:
                 repo_id = config["hf_repo_id"]
                 for repo in cache_info.repos:
                     if repo.repo_id == repo_id:
@@ -307,7 +315,7 @@ async def get_model_status():
                                 pass
                         break
 
-            if not downloaded:
+            if not downloaded and not config["backend_managed"]:
                 try:
                     cache_dir = hf_constants.HF_HUB_CACHE
                     repo_cache = Path(cache_dir) / ("models--" + config["hf_repo_id"].replace("/", "--"))
@@ -347,7 +355,7 @@ async def get_model_status():
             except Exception:
                 loaded = False
 
-            is_downloading = config["hf_repo_id"] in active_download_repos
+            is_downloading = config["model_name"] in active_download_names
 
             if is_downloading:
                 downloaded = False
@@ -357,10 +365,12 @@ async def get_model_status():
                 models.ModelStatus(
                     model_name=config["model_name"],
                     display_name=config["display_name"],
+                    description=config["description"],
                     hf_repo_id=config["hf_repo_id"],
                     downloaded=downloaded,
                     downloading=is_downloading,
                     size_mb=size_mb,
+                    expected_size_mb=config["expected_size_mb"],
                     loaded=loaded,
                 )
             )
@@ -370,16 +380,18 @@ async def get_model_status():
             except Exception:
                 loaded = False
 
-            is_downloading = config["hf_repo_id"] in active_download_repos
+            is_downloading = config["model_name"] in active_download_names
 
             statuses.append(
                 models.ModelStatus(
                     model_name=config["model_name"],
                     display_name=config["display_name"],
+                    description=config["description"],
                     hf_repo_id=config["hf_repo_id"],
                     downloaded=False,
                     downloading=is_downloading,
                     size_mb=None,
+                    expected_size_mb=config["expected_size_mb"],
                     loaded=loaded,
                 )
             )
@@ -458,6 +470,16 @@ async def delete_model(model_name: str):
 
     try:
         unload_model_by_config(config)
+
+        if config.backend_managed:
+            from ..backends import get_tts_backend_for_engine
+
+            backend = get_tts_backend_for_engine(config.engine)
+            try:
+                backend.delete_model_files()
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return {"message": f"Model {model_name} deleted successfully"}
 
         cache_dir = hf_constants.HF_HUB_CACHE
         repo_cache_dir = Path(cache_dir) / ("models--" + hf_repo_id.replace("/", "--"))

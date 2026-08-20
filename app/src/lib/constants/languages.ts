@@ -1,3 +1,5 @@
+import { INDEXTTS_SUPPORTED_LANGUAGES } from '@/lib/utils/indexTts';
+
 /**
  * Supported languages for voice generation, per engine.
  *
@@ -6,6 +8,7 @@
  * Chatterbox Multilingual supports 23 languages.
  * Chatterbox Turbo is English-only.
  * Kokoro supports 8 languages.
+ * IndexTTS 2.5 supports Chinese, English, Japanese, Spanish, and Arabic.
  */
 
 /** All languages that any engine supports. */
@@ -70,6 +73,7 @@ export const ENGINE_LANGUAGES: Record<string, readonly LanguageCode[]> = {
   tada: ['en', 'ar', 'zh', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt'],
   kokoro: ['en', 'es', 'fr', 'hi', 'it', 'pt', 'ja', 'zh'],
   qwen_custom_voice: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
+  indextts: INDEXTTS_SUPPORTED_LANGUAGES,
 } as const;
 
 /** Helper: get language options for a given engine. */

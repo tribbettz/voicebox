@@ -65,6 +65,7 @@ async def create_generation(
     status: str = "completed",
     engine: Optional[str] = "qwen",
     model_size: Optional[str] = None,
+    engine_options: Optional[dict] = None,
     source: str = "manual",
 ) -> GenerationResponse:
     """
@@ -102,6 +103,7 @@ async def create_generation(
         instruct=instruct,
         engine=engine,
         model_size=model_size,
+        engine_options=engine_options,
         status=status,
         source=source,
         created_at=datetime.utcnow(),
@@ -221,6 +223,7 @@ async def list_generations(
             instruct=generation.instruct,
             engine=generation.engine or "qwen",
             model_size=generation.model_size,
+            engine_options=generation.engine_options,
             status=generation.status or "completed",
             error=generation.error,
             is_favorited=bool(generation.is_favorited),

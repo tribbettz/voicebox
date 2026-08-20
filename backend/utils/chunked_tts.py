@@ -210,6 +210,7 @@ async def generate_chunked(
     language: str = "en",
     seed: int | None = None,
     instruct: str | None = None,
+    engine_options: dict | None = None,
     max_chunk_chars: int = DEFAULT_MAX_CHUNK_CHARS,
     crossfade_ms: int = 50,
     trim_fn=None,
@@ -255,13 +256,23 @@ async def generate_chunked(
         chunk_seed: int | None,
         retry_depth: int = 0,
     ) -> tuple[np.ndarray, int]:
-        chunk_audio, chunk_sr = await backend.generate(
-            chunk_text,
-            voice_prompt,
-            language,
-            chunk_seed,
-            instruct,
-        )
+        if engine_options is None:
+            chunk_audio, chunk_sr = await backend.generate(
+                chunk_text,
+                voice_prompt,
+                language,
+                chunk_seed,
+                instruct,
+            )
+        else:
+            chunk_audio, chunk_sr = await backend.generate(
+                chunk_text,
+                voice_prompt,
+                language,
+                chunk_seed,
+                instruct,
+                engine_options=engine_options,
+            )
 
         if runaway_detector is not None and runaway_detector(chunk_audio, chunk_sr):
             if retry_depth >= MAX_RUNAWAY_RETRIES or len(chunk_text) <= MIN_RUNAWAY_RETRY_CHARS:

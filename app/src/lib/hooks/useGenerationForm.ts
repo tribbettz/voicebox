@@ -9,38 +9,87 @@ import { LANGUAGE_CODES, type LanguageCode } from '@/lib/constants/languages';
 import { useGeneration } from '@/lib/hooks/useGeneration';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useGenerationSettings } from '@/lib/hooks/useSettings';
-import {
-  encodeQwenAdvancedControls,
-  QWEN_ADVANCED_DEFAULTS,
-} from '@/lib/utils/qwenAdvanced';
+import { buildIndexTTSEngineOptions, INDEXTTS_DEFAULTS } from '@/lib/utils/indexTts';
+import { encodeQwenAdvancedControls, QWEN_ADVANCED_DEFAULTS } from '@/lib/utils/qwenAdvanced';
 import { useGenerationStore } from '@/stores/generationStore';
 import { useUIStore } from '@/stores/uiStore';
 
-const generationSchema = z.object({
-  text: z.string().min(1, '').max(50000),
-  language: z.enum(LANGUAGE_CODES as [LanguageCode, ...LanguageCode[]]),
-  seed: z.number().int().min(0).optional(),
-  modelSize: z.enum(['1.7B', '0.6B', '1B', '3B']).optional(),
-  instruct: z.string().max(500).optional(),
-  engine: z
-    .enum([
-      'qwen',
-      'qwen_custom_voice',
-      'luxtts',
-      'chatterbox',
-      'chatterbox_turbo',
-      'tada',
-      'kokoro',
-    ])
-    .optional(),
-  personality: z.boolean().optional(),
-  qwenTemperature: z.number().min(0.1).max(1.5),
-  qwenTopP: z.number().min(0.1).max(1),
-  qwenTopK: z.number().int().min(1).max(100),
-  qwenRepetitionPenalty: z.number().min(1).max(1.5),
-  maxChunkChars: z.number().int().min(100).max(5000),
-  crossfadeMs: z.number().int().min(0).max(500),
-});
+const generationSchema = z
+  .object({
+    text: z.string().min(1, '').max(50000),
+    language: z.enum(LANGUAGE_CODES as [LanguageCode, ...LanguageCode[]]),
+    seed: z.number().int().min(0).optional(),
+    modelSize: z.enum(['1.7B', '0.6B', '1B', '3B']).optional(),
+    instruct: z.string().max(500).optional(),
+    engine: z
+      .enum([
+        'qwen',
+        'qwen_custom_voice',
+        'luxtts',
+        'chatterbox',
+        'chatterbox_turbo',
+        'tada',
+        'kokoro',
+        'indextts',
+      ])
+      .optional(),
+    personality: z.boolean().optional(),
+    qwenTemperature: z.number().min(0.1).max(1.5),
+    qwenTopP: z.number().min(0.1).max(1),
+    qwenTopK: z.number().int().min(1).max(100),
+    qwenRepetitionPenalty: z.number().min(1).max(1.5),
+    indexTtsEmotionMode: z.enum(['natural', 'auto', 'instruction', 'vector', 'audio']),
+    indexTtsEmotionText: z.string().max(500),
+    indexTtsEmotionAudioAssetId: z.string(),
+    indexTtsEmotionAudioFilename: z.string(),
+    indexTtsEmoAlpha: z.number().min(0).max(1),
+    indexTtsUseRandom: z.boolean(),
+    indexTtsDurationFactor: z.number().min(0.5).max(2),
+    indexTtsHappy: z.number().min(0).max(1),
+    indexTtsAngry: z.number().min(0).max(1),
+    indexTtsSad: z.number().min(0).max(1),
+    indexTtsAfraid: z.number().min(0).max(1),
+    indexTtsDisgusted: z.number().min(0).max(1),
+    indexTtsMelancholic: z.number().min(0).max(1),
+    indexTtsSurprised: z.number().min(0).max(1),
+    indexTtsCalm: z.number().min(0).max(1),
+    maxChunkChars: z.number().int().min(100).max(5000),
+    crossfadeMs: z.number().int().min(0).max(500),
+  })
+  .superRefine((values, context) => {
+    if (values.engine !== 'indextts') return;
+    if (values.indexTtsEmotionMode === 'instruction' && !values.indexTtsEmotionText.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['indexTtsEmotionText'],
+        message: 'Enter an emotion / delivery instruction.',
+      });
+    }
+    if (values.indexTtsEmotionMode === 'audio' && !values.indexTtsEmotionAudioAssetId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['indexTtsEmotionAudioAssetId'],
+        message: 'Upload an emotion reference audio file.',
+      });
+    }
+    const vectorTotal = [
+      values.indexTtsHappy,
+      values.indexTtsAngry,
+      values.indexTtsSad,
+      values.indexTtsAfraid,
+      values.indexTtsDisgusted,
+      values.indexTtsMelancholic,
+      values.indexTtsSurprised,
+      values.indexTtsCalm,
+    ].reduce((sum, value) => sum + value, 0);
+    if (values.indexTtsEmotionMode === 'vector' && vectorTotal > 0.8 + Number.EPSILON) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['indexTtsEmotionMode'],
+        message: 'Emotion vector values must total 0.8 or less.',
+      });
+    }
+  });
 
 export type GenerationFormValues = z.infer<typeof generationSchema>;
 
@@ -82,6 +131,21 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       qwenTopP: QWEN_ADVANCED_DEFAULTS.topP,
       qwenTopK: QWEN_ADVANCED_DEFAULTS.topK,
       qwenRepetitionPenalty: QWEN_ADVANCED_DEFAULTS.repetitionPenalty,
+      indexTtsEmotionMode: INDEXTTS_DEFAULTS.emotionMode,
+      indexTtsEmotionText: INDEXTTS_DEFAULTS.emotionText,
+      indexTtsEmotionAudioAssetId: INDEXTTS_DEFAULTS.emotionAudioAssetId,
+      indexTtsEmotionAudioFilename: INDEXTTS_DEFAULTS.emotionAudioFilename,
+      indexTtsEmoAlpha: INDEXTTS_DEFAULTS.emoAlpha,
+      indexTtsUseRandom: INDEXTTS_DEFAULTS.useRandom,
+      indexTtsDurationFactor: INDEXTTS_DEFAULTS.durationFactor,
+      indexTtsHappy: INDEXTTS_DEFAULTS.vector.happy,
+      indexTtsAngry: INDEXTTS_DEFAULTS.vector.angry,
+      indexTtsSad: INDEXTTS_DEFAULTS.vector.sad,
+      indexTtsAfraid: INDEXTTS_DEFAULTS.vector.afraid,
+      indexTtsDisgusted: INDEXTTS_DEFAULTS.vector.disgusted,
+      indexTtsMelancholic: INDEXTTS_DEFAULTS.vector.melancholic,
+      indexTtsSurprised: INDEXTTS_DEFAULTS.vector.surprised,
+      indexTtsCalm: INDEXTTS_DEFAULTS.vector.calm,
       maxChunkChars: defaultMaxChunkChars,
       crossfadeMs: defaultCrossfadeMs,
       ...options.defaultValues,
@@ -116,41 +180,45 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
     try {
       const engine = data.engine || 'qwen';
       const modelName =
-        engine === 'luxtts'
-          ? 'luxtts'
-          : engine === 'chatterbox'
-            ? 'chatterbox-tts'
-            : engine === 'chatterbox_turbo'
-              ? 'chatterbox-turbo'
-              : engine === 'tada'
-                ? data.modelSize === '3B'
-                  ? 'tada-3b-ml'
-                  : 'tada-1b'
-                : engine === 'kokoro'
-                  ? 'kokoro'
-                  : engine === 'qwen_custom_voice'
-                    ? `qwen-custom-voice-${data.modelSize}`
-                    : `qwen-tts-${data.modelSize}`;
+        engine === 'indextts'
+          ? 'indextts-2.5'
+          : engine === 'luxtts'
+            ? 'luxtts'
+            : engine === 'chatterbox'
+              ? 'chatterbox-tts'
+              : engine === 'chatterbox_turbo'
+                ? 'chatterbox-turbo'
+                : engine === 'tada'
+                  ? data.modelSize === '3B'
+                    ? 'tada-3b-ml'
+                    : 'tada-1b'
+                  : engine === 'kokoro'
+                    ? 'kokoro'
+                    : engine === 'qwen_custom_voice'
+                      ? `qwen-custom-voice-${data.modelSize}`
+                      : `qwen-tts-${data.modelSize}`;
       const displayName =
-        engine === 'luxtts'
-          ? 'LuxTTS'
-          : engine === 'chatterbox'
-            ? 'Chatterbox TTS'
-            : engine === 'chatterbox_turbo'
-              ? 'Chatterbox Turbo'
-              : engine === 'tada'
-                ? data.modelSize === '3B'
-                  ? 'TADA 3B Multilingual'
-                  : 'TADA 1B'
-                : engine === 'kokoro'
-                  ? 'Kokoro 82M'
-                  : engine === 'qwen_custom_voice'
-                    ? data.modelSize === '1.7B'
-                      ? 'Qwen CustomVoice 1.7B'
-                      : 'Qwen CustomVoice 0.6B'
-                    : data.modelSize === '1.7B'
-                      ? 'Qwen TTS 1.7B'
-                      : 'Qwen TTS 0.6B';
+        engine === 'indextts'
+          ? 'IndexTTS 2.5 (Expressive Clone)'
+          : engine === 'luxtts'
+            ? 'LuxTTS'
+            : engine === 'chatterbox'
+              ? 'Chatterbox TTS'
+              : engine === 'chatterbox_turbo'
+                ? 'Chatterbox Turbo'
+                : engine === 'tada'
+                  ? data.modelSize === '3B'
+                    ? 'TADA 3B Multilingual'
+                    : 'TADA 1B'
+                  : engine === 'kokoro'
+                    ? 'Kokoro 82M'
+                    : engine === 'qwen_custom_voice'
+                      ? data.modelSize === '1.7B'
+                        ? 'Qwen CustomVoice 1.7B'
+                        : 'Qwen CustomVoice 0.6B'
+                      : data.modelSize === '1.7B'
+                        ? 'Qwen TTS 1.7B'
+                        : 'Qwen TTS 0.6B';
 
       try {
         const modelStatus = await apiClient.getModelStatus();
@@ -187,6 +255,7 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         seed: data.seed,
         model_size: hasModelSizes ? data.modelSize : undefined,
         engine,
+        engine_options: engine === 'indextts' ? buildIndexTTSEngineOptions(data) : undefined,
         instruct,
         personality: data.personality || undefined,
         max_chunk_chars: data.maxChunkChars,
@@ -209,6 +278,21 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         qwenTopP: data.qwenTopP,
         qwenTopK: data.qwenTopK,
         qwenRepetitionPenalty: data.qwenRepetitionPenalty,
+        indexTtsEmotionMode: data.indexTtsEmotionMode,
+        indexTtsEmotionText: data.indexTtsEmotionText,
+        indexTtsEmotionAudioAssetId: data.indexTtsEmotionAudioAssetId,
+        indexTtsEmotionAudioFilename: data.indexTtsEmotionAudioFilename,
+        indexTtsEmoAlpha: data.indexTtsEmoAlpha,
+        indexTtsUseRandom: data.indexTtsUseRandom,
+        indexTtsDurationFactor: data.indexTtsDurationFactor,
+        indexTtsHappy: data.indexTtsHappy,
+        indexTtsAngry: data.indexTtsAngry,
+        indexTtsSad: data.indexTtsSad,
+        indexTtsAfraid: data.indexTtsAfraid,
+        indexTtsDisgusted: data.indexTtsDisgusted,
+        indexTtsMelancholic: data.indexTtsMelancholic,
+        indexTtsSurprised: data.indexTtsSurprised,
+        indexTtsCalm: data.indexTtsCalm,
         maxChunkChars: data.maxChunkChars,
         crossfadeMs: data.crossfadeMs,
       });

@@ -53,12 +53,16 @@ class ModelConfig:
     display_name: str  # e.g. "LuxTTS (Fast, CPU-friendly)"
     engine: str  # e.g. "luxtts", "chatterbox"
     hf_repo_id: str  # e.g. "YatharthS/LuxTTS"
+    description: str = ""
     model_size: str = "default"
     size_mb: int = 0
     needs_trim: bool = False
     retries_runaway: bool = False
     supports_instruct: bool = False
     languages: list[str] = field(default_factory=lambda: ["en"])
+    # Multi-repository runtimes can own readiness/download/delete while still
+    # using the normal registry and Models UI.
+    backend_managed: bool = False
 
 
 @runtime_checkable
@@ -106,6 +110,7 @@ class TTSBackend(Protocol):
         language: str = "en",
         seed: Optional[int] = None,
         instruct: Optional[str] = None,
+        engine_options: Optional[dict] = None,
     ) -> Tuple[np.ndarray, int]:
         """
         Generate audio from text.
@@ -216,6 +221,7 @@ TTS_ENGINES = {
     "chatterbox_turbo": "Chatterbox Turbo",
     "tada": "TADA",
     "kokoro": "Kokoro",
+    "indextts": "IndexTTS 2.5",
 }
 
 LLM_ENGINES = {
@@ -295,6 +301,16 @@ def _get_non_qwen_tts_configs() -> list[ModelConfig]:
     These are static — no backend-type branching needed.
     """
     return [
+        ModelConfig(
+            model_name="indextts-2.5",
+            display_name="IndexTTS 2.5 (Expressive Clone)",
+            description="Expressive zero-shot voice cloning with independent emotion control.",
+            engine="indextts",
+            hf_repo_id="IndexTeam/IndexTTS-2.5",
+            size_mb=7907,
+            languages=["zh", "en", "ja", "es", "ar"],
+            backend_managed=True,
+        ),
         ModelConfig(
             model_name="luxtts",
             display_name="LuxTTS (Fast, CPU-friendly)",
@@ -654,6 +670,9 @@ def get_model_load_func(config: ModelConfig):
     if config.engine == "qwen_llm":
         return lambda: llm_service.get_llm_model().load_model(config.model_size)
 
+    if config.backend_managed:
+        return lambda: get_tts_backend_for_engine(config.engine).download_model()
+
     return lambda: get_tts_backend_for_engine(config.engine).load_model()
 
 
@@ -723,6 +742,10 @@ def get_tts_backend_for_engine(engine: str) -> TTSBackend:
             from .qwen_custom_voice_backend import QwenCustomVoiceBackend
 
             backend = QwenCustomVoiceBackend()
+        elif engine == "indextts":
+            from .indextts_backend import IndexTTSBackend
+
+            backend = IndexTTSBackend()
         else:
             raise ValueError(f"Unknown TTS engine: {engine}. Supported: {list(TTS_ENGINES.keys())}")
 

@@ -143,7 +143,8 @@ export function FloatingGenerateBox({
     | 'chatterbox_turbo'
     | 'tada'
     | 'kokoro'
-    | 'qwen_custom_voice';
+    | 'qwen_custom_voice'
+    | 'indextts';
   useEffect(() => {
     if (selectedProfile?.language) {
       form.setValue('language', selectedProfile.language as LanguageCode);
@@ -230,6 +231,18 @@ export function FloatingGenerateBox({
     await handleSubmit(data, selectedProfileId);
   }
 
+  function onInvalid(errors: typeof form.formState.errors) {
+    const firstError = Object.values(errors).find((error) => error?.message);
+    toast({
+      title: 'Check generation options',
+      description:
+        typeof firstError?.message === 'string'
+          ? firstError.message
+          : 'One or more generation options are invalid.',
+      variant: 'destructive',
+    });
+  }
+
   return (
     <motion.div
       ref={containerRef}
@@ -252,7 +265,7 @@ export function FloatingGenerateBox({
         transition={{ duration: 0.6, ease: 'easeInOut' }}
       >
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)}>
+          <form onSubmit={form.handleSubmit(onSubmit, onInvalid)}>
             <div className="flex gap-2">
               <motion.div className="flex-1" transition={{ duration: 0.3, ease: 'easeOut' }}>
                 <FormField

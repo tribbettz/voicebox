@@ -1,0 +1,126 @@
+---
+title: "IndexTTS 2.5 Integration"
+description: "Pinned runtime, model assets, controls, persistence, and update procedure"
+---
+
+Voicebox's `indextts` engine integrates **IndexTTS 2.5**, an expressive
+zero-shot cloning engine with emotion guidance independent of its speaker
+reference. It is optional and is shown as **IndexTTS 2.5 (Expressive Clone)**
+in profile, generation, and model management views.
+
+## Pinned upstream and assets
+
+The runtime is reproducibly pinned to IndexTTS source commit
+`ee40fa7d6c6b8a2c7f06105f9f1e65775b74868c`. This includes the 2.5 release and
+the upstream Torchaudio waveform-normalization compatibility fix reviewed for
+Voicebox's Torchaudio 2.10 runtime.
+
+The Models download action fetches exact immutable revisions of all files that
+inference needs:
+
+| Purpose | Repository | Revision |
+| --- | --- | --- |
+| IndexTTS 2.5 model and Qwen emotion model | `IndexTeam/IndexTTS-2.5` | `c39ce5ba981572cb187443877ff559dfb246ce63` |
+| speech representation | `facebook/w2v-bert-2.0` | `da985ba0987f70aaeb84a80f2851cfac8c697a7b` |
+| speaker embedding | `funasr/campplus` | `e4b6ede7ce16997aff4ae69fbca1f0175e2afede` |
+| vocoder | `nvidia/bigvgan_v2_22khz_80band_256x` | `633ff708ed5b74903e86ff1298cf4a98e921c513` |
+
+Readiness checks validate every required file and its pinned byte size, and
+reject any directory containing an `.incomplete` file. As a result,
+“Downloaded” means first generation can run offline without a surprise
+multi-gigabyte fetch. The deliberately omitted W2V-BERT Conformer checkpoint
+is not used by IndexTTS inference.
+
+With Docker's `HF_HUB_CACHE=/models/huggingface`, the dedicated persistent
+directory is:
+
+```text
+/models/huggingface/voicebox-indextts-2.5
+```
+
+Its validated payload is approximately 7.72 GiB (7,907 MiB), including the
+three auxiliary runtimes. The path remains inside the existing mounted model
+volume and does not move or redownload Qwen caches.
+
+## Dependency isolation
+
+IndexTTS's vendored generation code requires Transformers 4.52.1, while the
+working Voicebox/Qwen stack uses Transformers 4.57.3. Import testing found a
+concrete `QuantizedCacheConfig` incompatibility when IndexTTS was loaded with
+4.57.3.
+
+The CUDA image therefore creates `/opt/indextts-venv` with
+`--system-site-packages`. A small JSON-lines worker subprocess uses the venv's
+Transformers 4.52.1 and IndexTTS-specific packages, while reusing Voicebox's
+unchanged Torch 2.10.0, Torchaudio 2.10.0, NumPy, CUDA 12.8 libraries, and GPU.
+The main server and Qwen continue to import Transformers 4.57.3. No installed
+package is patched and IndexTTS source is not vendored into this repository.
+
+The worker starts on demand, uses BF16 on CUDA, and leaves DeepSpeed, the CUDA
+kernel extension, acceleration wrappers, and `torch.compile` disabled. Unload
+or cancellation terminates it so its VRAM is returned.
+
+## Supported behavior
+
+Supported languages are Chinese (`zh`), English (`en`), Japanese (`ja`),
+Spanish (`es`), and Arabic (`ar`). Voicebox exposes these upstream controls:
+
+- natural delivery from the speaker reference;
+- automatic emotion inference from the spoken script;
+- emotion/delivery description via `use_emo_text` and `emo_text`;
+- all eight vector dimensions in upstream order: happy, angry, sad, afraid,
+  disgusted, melancholic, surprised, calm;
+- a separate uploaded emotion reference via `emo_audio_prompt`;
+- `emo_alpha` from 0 to 1;
+- optional `use_random` (off by default because upstream warns it can reduce
+  cloning fidelity);
+- `duration_factor` from 0.5 to 2.0, where values below 1 are faster and values
+  above 1 are slower;
+- deterministic request seeding where upstream operations permit it;
+- English CMU, Chinese Pinyin, and Japanese Kana pronunciation replacements
+  using upstream's `<word|pronunciation>` syntax.
+
+The emotion instruction is delivery guidance, not a general arbitrary TTS
+instruction. IndexTTS does not expose exact target-duration control.
+
+IndexTTS accepts one speaker reference and truncates it at 15 seconds. For a
+profile with multiple samples, Voicebox deterministically chooses the sample
+with the longest useful duration (capped at 15 seconds), breaking ties by
+sample ID. It does not concatenate samples that upstream would discard.
+
+Emotion-reference uploads are decoded and normalized by Voicebox, limited to
+20 MiB and 2–15 seconds, addressed by an opaque UUID, and retained for seven
+days so retry/regenerate can reuse them. Expired files are cleaned on the next
+upload or resolution.
+
+All options are validated as typed API data and stored in the generation's
+single `engine_options` JSON column. Retry, regenerate, history, and generation
+export/import preserve them. Existing rows with `NULL` remain valid.
+Voicebox-native `[pause ...]` processing happens outside the model and forwards
+the same IndexTTS options to every speech span.
+
+## Updating IndexTTS
+
+1. Review a specific upstream release/commit; do not point the Docker build at
+   mutable `main`.
+2. Re-run the dependency/import audit against the unchanged Voicebox CUDA and
+   Qwen stacks. Keep isolation unless the Transformers collision is proven gone.
+3. Update `INDEXTTS_SOURCE_COMMIT` and the Docker source URL together.
+4. Pin each Hugging Face revision, enumerate only inference-required files,
+   and update exact byte sizes and expected model size.
+5. Run mocked backend/frontend tests, both production builds, the normal
+   cached Docker build, a Models-tab download, restart persistence checks, real
+   RTX CUDA smoke tests, and Qwen/Chatterbox regressions.
+
+## License and limitations
+
+IndexTTS is an optional external runtime. Its source, weights, and outputs use
+the **bilibili Model Use License Agreement**, not Voicebox's MIT license. See
+the repository-level `THIRD_PARTY.md` and the `LICENSE` retained in the
+downloaded model directory.
+
+Known limitations: a cloned profile is required; one speaker sample is used;
+emotion assets expire after seven days; random emotion may weaken speaker
+identity; deterministic seeds cannot guarantee bit-identical output across
+different GPU/library versions; CPU operation is not an acceptance target for
+this CUDA integration.

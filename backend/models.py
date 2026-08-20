@@ -2,8 +2,11 @@
 Pydantic models for request/response validation.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from enum import Enum
+from typing import List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 
 from .utils.capture_chords import (
@@ -76,6 +79,85 @@ class ProfileSampleResponse(BaseModel):
         from_attributes = True
 
 
+class IndexTTSEmotionMode(str, Enum):
+    """Mutually-exclusive IndexTTS emotion sources."""
+
+    NATURAL = "natural"
+    AUTO = "auto"
+    INSTRUCTION = "instruction"
+    VECTOR = "vector"
+    AUDIO = "audio"
+
+
+class IndexTTSEmotionVector(BaseModel):
+    """The official IndexTTS emotion dimensions in upstream order."""
+
+    happy: float = Field(default=0.0, ge=0.0, le=1.0)
+    angry: float = Field(default=0.0, ge=0.0, le=1.0)
+    sad: float = Field(default=0.0, ge=0.0, le=1.0)
+    afraid: float = Field(default=0.0, ge=0.0, le=1.0)
+    disgusted: float = Field(default=0.0, ge=0.0, le=1.0)
+    melancholic: float = Field(default=0.0, ge=0.0, le=1.0)
+    surprised: float = Field(default=0.0, ge=0.0, le=1.0)
+    calm: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_total_strength(self):
+        if sum(self.model_dump().values()) > 0.8 + 1e-9:
+            raise ValueError("IndexTTS emotion vector values must sum to 0.8 or less")
+        return self
+
+    def as_ordered_list(self) -> list[float]:
+        return [
+            self.happy,
+            self.angry,
+            self.sad,
+            self.afraid,
+            self.disgusted,
+            self.melancholic,
+            self.surprised,
+            self.calm,
+        ]
+
+
+class IndexTTSOptions(BaseModel):
+    emotion_mode: IndexTTSEmotionMode = IndexTTSEmotionMode.NATURAL
+    emotion_text: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    emotion_vector: Optional[IndexTTSEmotionVector] = None
+    emotion_audio_asset_id: Optional[UUID] = None
+    emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    use_random: bool = False
+    duration_factor: float = Field(default=1.0, ge=0.5, le=2.0)
+
+    @model_validator(mode="after")
+    def validate_emotion_source(self):
+        has_text = bool(self.emotion_text and self.emotion_text.strip())
+        has_vector = self.emotion_vector is not None
+        has_audio = self.emotion_audio_asset_id is not None
+        expected = {
+            IndexTTSEmotionMode.NATURAL: (False, False, False),
+            IndexTTSEmotionMode.AUTO: (False, False, False),
+            IndexTTSEmotionMode.INSTRUCTION: (True, False, False),
+            IndexTTSEmotionMode.VECTOR: (False, True, False),
+            IndexTTSEmotionMode.AUDIO: (False, False, True),
+        }[self.emotion_mode]
+        if (has_text, has_vector, has_audio) != expected:
+            raise ValueError(
+                f"IndexTTS emotion mode '{self.emotion_mode.value}' has conflicting or missing emotion input"
+            )
+        if self.use_random and self.emotion_mode not in {
+            IndexTTSEmotionMode.AUTO,
+            IndexTTSEmotionMode.INSTRUCTION,
+            IndexTTSEmotionMode.VECTOR,
+        }:
+            raise ValueError("IndexTTS random emotion sampling requires auto, instruction, or vector mode")
+        return self
+
+
+class EngineOptions(BaseModel):
+    indextts: Optional[IndexTTSOptions] = None
+
+
 class GenerationRequest(BaseModel):
     """Request model for voice generation."""
 
@@ -85,7 +167,8 @@ class GenerationRequest(BaseModel):
     seed: Optional[int] = Field(None, ge=0)
     model_size: Optional[str] = Field(default="1.7B", pattern="^(1\\.7B|0\\.6B|1B|3B)$")
     instruct: Optional[str] = Field(None, max_length=500)
-    engine: Optional[str] = Field(default="qwen", pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$")
+    engine: Optional[str] = Field(default="qwen", pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro|indextts)$")
+    engine_options: Optional[EngineOptions] = None
     personality: bool = Field(
         default=False,
         description="When true and the profile has a personality prompt, the input text is rewritten in-character before TTS.",
@@ -101,6 +184,12 @@ class GenerationRequest(BaseModel):
         None, description="Effects chain to apply after generation (overrides profile default)"
     )
 
+    @model_validator(mode="after")
+    def validate_engine_options(self):
+        if self.engine_options and self.engine_options.indextts is not None and self.engine != "indextts":
+            raise ValueError("IndexTTS options can only be used with engine='indextts'")
+        return self
+
 
 class GenerationResponse(BaseModel):
     """Response model for voice generation."""
@@ -115,6 +204,7 @@ class GenerationResponse(BaseModel):
     instruct: Optional[str] = None
     engine: Optional[str] = "qwen"
     model_size: Optional[str] = None
+    engine_options: Optional[EngineOptions] = None
     status: str = "completed"
     error: Optional[str] = None
     is_favorited: bool = False
@@ -150,6 +240,7 @@ class HistoryResponse(BaseModel):
     instruct: Optional[str] = None
     engine: Optional[str] = "qwen"
     model_size: Optional[str] = None
+    engine_options: Optional[EngineOptions] = None
     status: str = "completed"
     error: Optional[str] = None
     is_favorited: bool = False
@@ -317,7 +408,7 @@ class MCPClientBindingResponse(BaseModel):
     profile_id: Optional[str] = None
     default_engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro|indextts)$",
     )
     default_personality: bool = False
     last_seen_at: Optional[datetime] = None
@@ -336,7 +427,7 @@ class MCPClientBindingUpsert(BaseModel):
     profile_id: Optional[str] = None
     default_engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro|indextts)$",
     )
     default_personality: bool = False
 
@@ -355,7 +446,7 @@ class SpeakRequest(BaseModel):
     )
     engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro|indextts)$",
     )
     personality: Optional[bool] = Field(
         None,
@@ -470,10 +561,12 @@ class ModelStatus(BaseModel):
 
     model_name: str
     display_name: str
+    description: Optional[str] = None
     hf_repo_id: Optional[str] = None  # HuggingFace repository ID
     downloaded: bool
     downloading: bool = False  # True if download is in progress
     size_mb: Optional[float] = None
+    expected_size_mb: Optional[float] = None
     loaded: bool = False
 
 
@@ -487,6 +580,15 @@ class ModelDownloadRequest(BaseModel):
     """Request model for triggering model download."""
 
     model_name: str
+
+
+class GenerationAssetResponse(BaseModel):
+    """Opaque, bounded-lifetime generation asset returned after upload."""
+
+    id: str
+    filename: str
+    duration: float
+    expires_at: datetime
 
 
 class ModelMigrateRequest(BaseModel):

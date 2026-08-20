@@ -74,6 +74,9 @@ class Generation(Base):
     instruct = Column(Text)
     engine = Column(String, default="qwen")
     model_size = Column(String, nullable=True)
+    # Typed per-engine request options are validated by Pydantic at the API
+    # edge and stored as one JSON document so old rows remain readable.
+    engine_options = Column(JSON, nullable=True)
     status = Column(String, default="completed")
     error = Column(Text, nullable=True)
     is_favorited = Column(Boolean, default=False)

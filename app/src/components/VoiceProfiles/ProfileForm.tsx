@@ -52,6 +52,7 @@ import {
 import { useSystemAudioCapture } from '@/lib/hooks/useSystemAudioCapture';
 import { useTranscription } from '@/lib/hooks/useTranscription';
 import { convertToWav, formatAudioDuration, getAudioDuration } from '@/lib/utils/audio';
+import { INDEXTTS_PROFILE_ENGINE_OPTION } from '@/lib/utils/indexTts';
 import { usePlatform } from '@/platform/PlatformContext';
 import { useServerStore } from '@/stores/serverStore';
 import { type ProfileFormDraft, useUIStore } from '@/stores/uiStore';
@@ -70,6 +71,7 @@ const DEFAULT_ENGINE_OPTIONS = [
   { value: 'chatterbox_turbo', label: 'Chatterbox Turbo' },
   { value: 'tada', label: 'TADA' },
   { value: 'kokoro', label: 'Kokoro 82M' },
+  INDEXTTS_PROFILE_ENGINE_OPTION,
 ] as const;
 
 function makeProfileSchema(t: (key: string) => string) {
